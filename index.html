@@ -331,6 +331,57 @@
     margin-bottom:26px;
   }
   .search-links.show{display:flex;}
+
+  /* ADVANCED SEARCH */
+  .adv-toggle{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    font-weight:600;
+    color:var(--ink-soft);
+    background:none;
+    border:none;
+    cursor:pointer;
+    padding:0 2px;
+    margin:-6px 0 14px;
+    text-decoration:underline;
+    text-underline-offset:3px;
+  }
+  .adv-toggle:hover{color:var(--ink);}
+  .adv-panel{
+    display:none;
+    flex-direction:column;
+    gap:8px;
+    background:var(--paper);
+    border:1.5px solid var(--line-strong);
+    border-radius:10px;
+    padding:14px;
+    margin:0 0 16px;
+  }
+  .adv-panel.show{display:flex;}
+  .adv-row{display:flex;gap:8px;flex-wrap:wrap;}
+  .adv-row input, .adv-row select{
+    flex:1;
+    min-width:130px;
+    border:1.5px solid var(--line-strong);
+    border-radius:6px;
+    padding:9px 12px;
+    font-family:'Inter',sans-serif;
+    font-size:13px;
+    background:#fff;
+    color:var(--ink);
+    outline:none;
+  }
+  .adv-row input:focus, .adv-row select:focus{border-color:var(--teal);}
+  .adv-note{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;
+    color:var(--ink-soft);
+    margin:2px 2px 0;
+    line-height:1.4;
+  }
   .link-chip{
     font-family:'Inter',sans-serif;
     font-size:13px;
@@ -571,6 +622,27 @@
     <span class="search-bar-icon">🔎</span>
     <input type="text" id="search-term-input" placeholder="Digite o nome do produto e aperte Enter">
     <button class="btn btn-primary" id="btn-search-term">Pesquisar</button>
+  </div>
+  <button class="adv-toggle" id="adv-toggle" type="button" aria-expanded="false" aria-controls="adv-panel">🔧 Busca avançada</button>
+  <div class="adv-panel" id="adv-panel">
+    <div class="adv-row">
+      <input type="text" id="adv-marca" placeholder="Marca / modelo (ex: Samsung A55)">
+    </div>
+    <div class="adv-row">
+      <input type="text" id="adv-excluir" placeholder="Excluir palavras, separadas por vírgula (ex: capinha, usado)">
+    </div>
+    <div class="adv-row">
+      <input type="number" id="adv-preco-min" placeholder="Preço mín. R$" step="0.01" min="0">
+      <input type="number" id="adv-preco-max" placeholder="Preço máx. R$" step="0.01" min="0">
+    </div>
+    <div class="adv-row">
+      <select id="adv-condicao">
+        <option value="">Novo ou usado (qualquer)</option>
+        <option value="novo">Somente novo</option>
+        <option value="usado">Somente usado</option>
+      </select>
+    </div>
+    <p class="adv-note">O filtro de preço se aplica automaticamente no Google Shopping e no Mercado Livre. Nos outros sites, use o filtro de preço da própria página depois de abrir o link.</p>
   </div>
   <div class="search-links" id="typed-links"></div>
 
@@ -941,19 +1013,81 @@
     productCard.classList.add('show');
     setStatus('Produto identificado! Confira os links de pesquisa abaixo.');
     const term = p.termo_busca || p.nome;
-    buildSearchLinks(term, searchLinks);
+    const adv = readAdvFilters('adv-');
+    const refined = refineTerm(term, adv);
+    buildSearchLinks(refined, searchLinks, adv);
     searchSection.style.display = 'block';
     items = [];
     renderRanking();
-    askLocation(term);
+    askLocation(refined);
   }
 
-  function buildSearchLinks(term, targetEl){
+  function readAdvFilters(prefix, uid){
+    const sfx = uid ? '-' + uid : '';
+    const g = id => $(id + sfx);
+    const marcaEl = g(prefix + 'marca');
+    const excluirEl = g(prefix + 'excluir');
+    const minEl = g(prefix + 'preco-min');
+    const maxEl = g(prefix + 'preco-max');
+    const condEl = g(prefix + 'condicao');
+    return {
+      marca: marcaEl ? marcaEl.value.trim() : '',
+      excluir: excluirEl ? excluirEl.value.trim() : '',
+      precoMin: minEl && minEl.value !== '' ? parseFloat(minEl.value) : null,
+      precoMax: maxEl && maxEl.value !== '' ? parseFloat(maxEl.value) : null,
+      condicao: condEl ? condEl.value : ''
+    };
+  }
+
+  function refineTerm(baseTerm, adv){
+    let term = baseTerm.trim();
+    if(adv.marca) term += ' ' + adv.marca;
+    if(adv.condicao === 'novo') term += ' novo';
+    if(adv.condicao === 'usado') term += ' usado';
+    if(adv.excluir){
+      adv.excluir.split(',').map(w => w.trim()).filter(Boolean).forEach(w => {
+        term += ' -' + w.replace(/\s+/g, '-');
+      });
+    }
+    return term.trim().replace(/\s+/g, ' ');
+  }
+
+  function buildPriceText(min, max){
+    if(min && max) return ` entre R$${min} e R$${max}`;
+    if(min) return ` acima de R$${min}`;
+    if(max) return ` até R$${max}`;
+    return '';
+  }
+
+  function googleShoppingUrl(q, adv){
+    const parts = [];
+    if(adv.precoMin || adv.precoMax){
+      parts.push('mr:1', 'price:1');
+      if(adv.precoMin) parts.push('ppr_min:' + Math.round(adv.precoMin));
+      if(adv.precoMax) parts.push('ppr_max:' + Math.round(adv.precoMax));
+    }
+    const tbs = parts.length ? `&tbs=${encodeURIComponent(parts.join(','))}` : '';
+    return `https://www.google.com/search?tbm=shop&q=${q}${tbs}`;
+  }
+
+  function mercadoLivreUrl(q, adv){
+    let url = `https://lista.mercadolivre.com.br/${q}`;
+    if(adv.precoMin || adv.precoMax){
+      const min = adv.precoMin ? Math.round(adv.precoMin) : 0;
+      const max = adv.precoMax ? Math.round(adv.precoMax) : 99999999;
+      url += `_PriceRange_${min}-${max}`;
+    }
+    return url;
+  }
+
+  function buildSearchLinks(term, targetEl, adv){
+    adv = adv || {};
     const q = encodeURIComponent(term);
+    const qGoogle = encodeURIComponent(term + buildPriceText(adv.precoMin, adv.precoMax));
     const sites = [
-      {label:'Google Shopping', url:`https://www.google.com/search?tbm=shop&q=${q}`},
-      {label:'Google', url:`https://www.google.com/search?q=${q}+preço`},
-      {label:'Mercado Livre', url:`https://lista.mercadolivre.com.br/${q}`},
+      {label:'Google Shopping', url: googleShoppingUrl(q, adv)},
+      {label:'Google', url:`https://www.google.com/search?q=${qGoogle}+preço`},
+      {label:'Mercado Livre', url: mercadoLivreUrl(q, adv)},
       {label:'AliExpress', url:`https://pt.aliexpress.com/wholesale?SearchText=${q}`},
       {label:'Amazon.com.br', url:`https://www.amazon.com.br/s?k=${q}`},
       {label:'Shopee', url:`https://shopee.com.br/search?keyword=${q}`},
@@ -974,11 +1108,19 @@
     targetEl.classList.add('show');
   }
 
+  $('adv-toggle').addEventListener('click', () => {
+    const panel = $('adv-panel');
+    const isOpen = panel.classList.toggle('show');
+    $('adv-toggle').setAttribute('aria-expanded', String(isOpen));
+  });
+
   $('btn-search-term').addEventListener('click', () => {
     const term = searchTermInput.value.trim();
     if(!term){ setStatus('Digite um nome de produto para pesquisar.', true); return; }
-    buildSearchLinks(term, typedLinks);
-    askLocation(term);
+    const adv = readAdvFilters('adv-');
+    const refined = refineTerm(term, adv);
+    buildSearchLinks(refined, typedLinks, adv);
+    askLocation(refined);
   });
   searchTermInput.addEventListener('keydown', (e) => {
     if(e.key === 'Enter'){ e.preventDefault(); $('btn-search-term').click(); }
@@ -1071,6 +1213,27 @@
         <input type="text" id="search-${uid}" placeholder="${config.placeholder}">
         <button class="btn btn-primary" id="btn-search-${uid}">Pesquisar</button>
       </div>
+      <button class="adv-toggle" id="adv-toggle-${uid}" type="button" aria-expanded="false" aria-controls="adv-panel-${uid}">🔧 Busca avançada</button>
+      <div class="adv-panel" id="adv-panel-${uid}">
+        <div class="adv-row">
+          <input type="text" id="adv-marca-${uid}" placeholder="Detalhe / marca / modelo (opcional)">
+        </div>
+        <div class="adv-row">
+          <input type="text" id="adv-excluir-${uid}" placeholder="Excluir palavras, separadas por vírgula">
+        </div>
+        <div class="adv-row">
+          <input type="number" id="adv-preco-min-${uid}" placeholder="Preço mín. R$" step="0.01" min="0">
+          <input type="number" id="adv-preco-max-${uid}" placeholder="Preço máx. R$" step="0.01" min="0">
+        </div>
+        <div class="adv-row">
+          <select id="adv-condicao-${uid}">
+            <option value="">Novo ou usado (qualquer)</option>
+            <option value="novo">Somente novo</option>
+            <option value="usado">Somente usado</option>
+          </select>
+        </div>
+        <p class="adv-note">O filtro de preço aqui entra como parte da busca; confira o filtro nativo de cada site depois de abrir o link.</p>
+      </div>
       <div class="search-links" id="links-${uid}"></div>
 
       <p class="section-title">02 · Monte o ranking</p>
@@ -1100,10 +1263,18 @@
     let catItems = [];
     let catIdCounter = 0;
 
+    $(`adv-toggle-${uid}`).addEventListener('click', () => {
+      const panel = $(`adv-panel-${uid}`);
+      const isOpen = panel.classList.toggle('show');
+      $(`adv-toggle-${uid}`).setAttribute('aria-expanded', String(isOpen));
+    });
+
     function runSearch(){
       const term = searchInput.value.trim();
       if(!term){ setStatus('Digite um nome para pesquisar.', true); return; }
-      const q = encodeURIComponent(term);
+      const adv = readAdvFilters('adv-', uid);
+      const refined = (refineTerm(term, adv) + buildPriceText(adv.precoMin, adv.precoMax)).trim();
+      const q = encodeURIComponent(refined);
       linksEl.innerHTML = '';
       config.sites.forEach(s => {
         const a = document.createElement('a');
@@ -1112,7 +1283,7 @@
         linksEl.appendChild(a);
       });
       linksEl.classList.add('show');
-      askLocation(term, config.mapsSuffix);
+      askLocation(refined, config.mapsSuffix);
     }
     $(`btn-search-${uid}`).addEventListener('click', runSearch);
     searchInput.addEventListener('keydown', (e) => { if(e.key==='Enter'){ e.preventDefault(); runSearch(); } });
